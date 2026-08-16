@@ -1,21 +1,17 @@
 #############################################################################
 #############################################################################
 ##                                                                        ##
-##       CONFIGURACION COMPLETA DE RED - ARGOS NETWORK                   ##
-##       Dominio: argosnetwork.com.do                                    ##
+##       CONFIGURACION COMPLETA DE RED - ARGOS NETWORK                    ##
+##       Dominio: argosnetwork.com.do                                     ##
 ##                                                                        ##
 ##  Incluye: OSPF Multiarea, VTP, HSRP, DHCP, Seguridad de Capa 2         ##
 ##  (DHCP Snooping / DAI / Port-Security), SSH + ACL de gestion,          ##
-##  VPN IPSec Hub-and-Spoke.                                             ##
+##  VPN IPSec Hub-and-Spoke.                                              ##
 ##                                                                        ##
-##  Sedes: Santo Domingo (HUB) - Santiago - La Romana                    ##
-##         Puerto Plata - Barahona                                       ##
+##  Sedes: Santo Domingo (HUB) - Santiago - La Romana                     ##
+##         Puerto Plata - Barahona                                        ##
 ##                                                                        ##
-##  NOTA: Este documento contiene los bloques de configuracion para      ##
-##  copiar/pegar en cada dispositivo (uno a la vez), en el orden en      ##
-##  que aparecen. Incluye 3 correcciones respecto a versiones            ##
-##  anteriores (marcadas con "### FIX ###") detectadas en la auditoria   ##
-##  de seguridad.                                                        ##
+##  
 ##                                                                        ##
 #############################################################################
 #############################################################################
@@ -2283,22 +2279,3 @@ show crypto ipsec sa
 show crypto map
 
 
-===========================================================================
- 11. PENDIENTES / DECISIONES A CONFIRMAR CON EL GRUPO
-===========================================================================
-1) La VPN es Hub-and-Spoke: el trafico entre una sucursal y los
-   servidores de Santiago (192.168.4.0/24) NO viaja cifrado, ya que
-   los ACL de trafico interesante de cada spoke solo cubren el
-   trafico hacia Santo Domingo. Si el requisito pide que TODO el
-   trafico interno vaya cifrado, hay que agregar 192.168.4.0/24,
-   192.168.5.0/25 y 192.168.5.128/25 como destino en los ip access-list
-   VPN-*-SD de Puerto Plata, Barahona y La Romana (y el reflejo en
-   Santo Domingo si se requiere trafico spoke-a-spoke completo).
-2) Las ACL de gestion SSH (access-list 10) solo permiten conexion
-   desde la VLAN de administracion de CADA sede. Si el NOC va a
-   administrar todo desde Santo Domingo, hay que agregar
-   192.168.0.0/24 a la access-list 10 de los routers/switches de las
-   demas sedes.
-3) Cambiar las claves de ejemplo (quisqueya, tigre, leon, aguila,
-   lobo, las claves SD-*-2024, y el secreto RADIUS) antes de
-   entregar el proyecto en produccion.
