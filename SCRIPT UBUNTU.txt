@@ -1,0 +1,578 @@
+#!/bin/bash
+#############################################################################
+# SCRIPT DE CONFIGURACION - SERVIDOR MULTISERVICIO SEDE SANTIAGO
+# Servicios: DNS | DHCP | WEB | NFS/RADIUS | CORREO
+# SO objetivo: Ubuntu Server 20.04 / 22.04
+#
+# Ejecutar como root:  sudo bash setup_servidor_santiago.sh
+#############################################################################
+ 
+set -e
+ 
+#############################################################################
+# 0. VARIABLES A EDITAR ANTES DE EJECUTAR
+#############################################################################
+ 
+# --- Datos de la empresa (EDITAR) ---
+EMPRESA_NOMBRE="Argos Networks"                  # Nombre visible de la empresa
+DOMINIO="argosnetworks.com.do"                   # Sufijo DNS / dominio de correo
+DOMINIO_WWW="www.${DOMINIO}"
+ 
+# --- Integrantes del grupo (EDITAR: agregar/quitar usuarios) ---
+# Se usan para: cuentas de correo, usuarios NFS/RADIUS
+# (Adaptados a formato Linux: sin espacios, minúsculas)
+USUARIOS=("karla_oviedo" "miguel_angel" "luis_g" "kendry_rene" "alexander_cruz" "anthony_naviel")
+PASSWORD_DEFECTO="Quisqueya2026*"                # Cambiar cada usuario su clave al primer login
+ 
+# --- Direccionamiento del servidor (Sede Santiago - VLAN 25 Centro de Datos) ---
+IFACE="ens160"                                    # Ajustar según la interfaz real del servidor
+SERVER_IP="192.168.4.10"
+SERVER_MASK="255.255.255.0"
+SERVER_CIDR="24"
+GATEWAY_SANTIAGO="192.168.4.1"                    # Gateway Multicapa Santiago (VLAN 25)
+DNS_PROPIO="192.168.4.10"                         # El propio servidor será el DNS
+ 
+# --- Redes de las VLAN de Santiago (para DHCP) ---
+# VLAN 25 - Centro de Datos (donde vive el servidor)
+NET25="192.168.4.0";  MASK25="255.255.255.0";   GW25="192.168.4.1"
+# VLAN 30 - Ventas
+NET30="192.168.5.0";  MASK30="255.255.255.128"; GW30="192.168.5.1"
+# VLAN 35 - Administracion
+NET35="192.168.5.128"; MASK35="255.255.255.128"; GW35="192.168.5.129"
+ 
+echo "======================================================================"
+echo " Configurando servidor multiservicio para: ${EMPRESA_NOMBRE} (${DOMINIO})"
+echo "======================================================================"
+ 
+#############################################################################
+# 1. DIRECCIONAMIENTO ESTATICO DEL SERVIDOR
+#############################################################################
+echo ">>> [1/7] Configurando IP estatica del servidor..."
+ 
+NETPLAN_FILE="/etc/netplan/01-netcfg.yaml"
+cat > "$NETPLAN_FILE" <<EOF
+network:
+  version: 2
+  ethernets:
+    ${IFACE}:
+      dhcp4: no
+      addresses: [${SERVER_IP}/${SERVER_CIDR}]
+      routes:
+        - to: default
+          via: ${GATEWAY_SANTIAGO}
+      nameservers:
+        addresses: [127.0.0.1, 8.8.8.8]
+EOF
+chmod 600 "$NETPLAN_FILE"
+netplan apply || echo "  (Aplica 'netplan apply' manualmente si el adaptador difiere)"
+ 
+# Hostname del servidor
+hostnamectl set-hostname "srv-santiago.${DOMINIO}"
+echo "127.0.1.1 srv-santiago.${DOMINIO} srv-santiago" >> /etc/hosts
+ 
+apt-get update -y
+ 
+#############################################################################
+# 2. SERVICIO DNS (BIND9)
+#############################################################################
+echo ">>> [2/7] Instalando y configurando DNS (BIND9)..."
+ 
+apt-get install -y bind9 bind9utils bind9-doc
+ 
+# Zona directa
+cat > /etc/bind/named.conf.local <<EOF
+zone "${DOMINIO}" {
+    type master;
+    file "/etc/bind/db.${DOMINIO}";
+};
+ 
+zone "4.168.192.in-addr.arpa" {
+    type master;
+    file "/etc/bind/db.192.168.4";
+};
+EOF
+ 
+SERIAL=$(date +%Y%m%d01)
+ 
+cat > "/etc/bind/db.${DOMINIO}" <<EOF
+\$TTL    604800
+@       IN      SOA     srv-santiago.${DOMINIO}. admin.${DOMINIO}. (
+                              ${SERIAL}   ; Serial
+                              604800      ; Refresh
+                              86400       ; Retry
+                              2419200     ; Expire
+                              604800 )    ; Negative Cache TTL
+;
+@               IN      NS      srv-santiago.${DOMINIO}.
+@               IN      MX  10  mail.${DOMINIO}.
+@               IN      A       ${SERVER_IP}
+srv-santiago    IN      A       ${SERVER_IP}
+www             IN      A       ${SERVER_IP}
+mail            IN      A       ${SERVER_IP}
+ns1             IN      A       ${SERVER_IP}
+radius          IN      A       ${SERVER_IP}
+nfs             IN      A       ${SERVER_IP}
+EOF
+ 
+cat > /etc/bind/db.192.168.4 <<EOF
+\$TTL    604800
+@       IN      SOA     srv-santiago.${DOMINIO}. admin.${DOMINIO}. (
+                              ${SERIAL}
+                              604800
+                              86400
+                              2419200
+                              604800 )
+;
+@       IN      NS      srv-santiago.${DOMINIO}.
+10      IN      PTR     srv-santiago.${DOMINIO}.
+EOF
+ 
+# Forwarders publicos
+sed -i '/options {/a \\tforwarders {\n\t\t8.8.8.8;\n\t\t1.1.1.1;\n\t};' /etc/bind/named.conf.options
+ 
+named-checkzone "${DOMINIO}" "/etc/bind/db.${DOMINIO}"
+systemctl enable bind9
+systemctl restart bind9
+ 
+#############################################################################
+# 3. SERVICIO DHCP (isc-dhcp-server) - una VLAN por departamento
+#############################################################################
+echo ">>> [3/7] Instalando y configurando DHCP..."
+ 
+apt-get install -y isc-dhcp-server
+ 
+sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"${IFACE}\"/" /etc/default/isc-dhcp-server
+ 
+cat > /etc/dhcp/dhcpd.conf <<EOF
+default-lease-time 600;
+max-lease-time 7200;
+authoritative;
+ 
+option domain-name "${DOMINIO}";
+option domain-name-servers ${DNS_PROPIO};
+ 
+# VLAN 25 - Centro de Datos (red local del servidor)
+subnet ${NET25} netmask ${MASK25} {
+  range 192.168.4.20 192.168.4.200;
+  option routers ${GW25};
+  option broadcast-address 192.168.4.255;
+}
+ 
+# VLAN 30 - Ventas (requiere ip helper-address en la SVI del Multicapa Santiago)
+subnet ${NET30} netmask ${MASK30} {
+  range 192.168.5.10 192.168.5.120;
+  option routers ${GW30};
+  option broadcast-address 192.168.5.127;
+}
+ 
+# VLAN 35 - Administracion (requiere ip helper-address en la SVI del Multicapa Santiago)
+subnet ${NET35} netmask ${MASK35} {
+  range 192.168.5.140 192.168.5.250;
+  option routers ${GW35};
+  option broadcast-address 192.168.5.255;
+}
+EOF
+ 
+systemctl enable isc-dhcp-server
+systemctl restart isc-dhcp-server
+ 
+echo "  NOTA IMPORTANTE: como el servidor solo tiene una interfaz en la VLAN 25,"
+echo "  para que reciba las solicitudes DHCP de VLAN 30 y VLAN 35 hay que agregar"
+echo "  'ip helper-address ${SERVER_IP}' en las interfaces vlan 30 y vlan 35"
+echo "  del switch Multicapa-Santiago. Ejemplo:"
+echo "    interface vlan 30"
+echo "     ip helper-address ${SERVER_IP}"
+echo "    interface vlan 35"
+echo "     ip helper-address ${SERVER_IP}"
+ 
+#############################################################################
+# 4. SERVICIO WEB (Apache2)
+#############################################################################
+echo ">>> [4/7] Instalando y configurando servidor Web..."
+ 
+apt-get install -y apache2
+ 
+mkdir -p /var/www/${DOMINIO}/html
+chown -R www-data:www-data /var/www/${DOMINIO}
+ 
+# Pagina de ejemplo - REEMPLAZAR con el contenido adjunto real de la empresa
+cat > /var/www/${DOMINIO}/html/index.html <<EOF
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>${EMPRESA_NOMBRE}</title>
+</head>
+<body>
+  <h1>Bienvenido a ${EMPRESA_NOMBRE}</h1>
+  <p>Sitio web oficial: ${DOMINIO_WWW}</p>
+  <!-- TODO: reemplazar este contenido con el material adjunto de la empresa -->
+</body>
+</html>
+EOF
+ 
+cat > /etc/apache2/sites-available/${DOMINIO}.conf <<EOF
+<VirtualHost *:80>
+    ServerName ${DOMINIO}
+    ServerAlias ${DOMINIO_WWW}
+    DocumentRoot /var/www/${DOMINIO}/html
+    ErrorLog \${APACHE_LOG_DIR}/${DOMINIO}_error.log
+    CustomLog \${APACHE_LOG_DIR}/${DOMINIO}_access.log combined
+</VirtualHost>
+EOF
+ 
+a2dissite 000-default.conf || true
+a2ensite ${DOMINIO}.conf
+systemctl enable apache2
+systemctl restart apache2
+ 
+#############################################################################
+# 5. SERVICIO NFS / RADIUS + CREACION DE USUARIOS
+#############################################################################
+echo ">>> [5/7] Instalando NFS y RADIUS, y creando usuarios del grupo..."
+ 
+apt-get install -y nfs-kernel-server freeradius
+ 
+# --- Crear un usuario del sistema por cada integrante (usado por NFS y RADIUS) ---
+mkdir -p /srv/nfs/compartido
+for USER in "${USUARIOS[@]}"; do
+    if ! id "$USER" &>/dev/null; then
+        useradd -m -s /bin/bash "$USER"
+        echo "${USER}:${PASSWORD_DEFECTO}" | chpasswd
+        echo "  Usuario creado: $USER"
+    fi
+done
+chown -R nobody:nogroup /srv/nfs/compartido
+chmod 2770 /srv/nfs/compartido
+ 
+# --- Exportar el recurso NFS a las redes internas de Santiago ---
+cat > /etc/exports <<EOF
+/srv/nfs/compartido  192.168.4.0/24(rw,sync,no_subtree_check)
+/srv/nfs/compartido  192.168.5.0/25(rw,sync,no_subtree_check)
+/srv/nfs/compartido  192.168.5.128/25(rw,sync,no_subtree_check)
+EOF
+ 
+exportfs -ra
+systemctl enable nfs-kernel-server
+systemctl restart nfs-kernel-server
+ 
+# --- RADIUS: dar de alta a cada integrante como usuario RADIUS ---
+RADIUS_USERS_FILE="/etc/freeradius/3.0/users"
+[ -f "$RADIUS_USERS_FILE" ] || RADIUS_USERS_FILE="/etc/freeradius/users"
+ 
+for USER in "${USUARIOS[@]}"; do
+    if ! grep -q "^${USER}\s" "$RADIUS_USERS_FILE" 2>/dev/null; then
+        echo "${USER}  Cleartext-Password := \"${PASSWORD_DEFECTO}\"" >> "$RADIUS_USERS_FILE"
+    fi
+done
+ 
+# --- Cliente RADIUS: permitir autenticacion desde la red interna de Santiago ---
+CLIENTS_FILE="/etc/freeradius/3.0/clients.conf"
+[ -f "$CLIENTS_FILE" ] || CLIENTS_FILE="/etc/freeradius/clients.conf"
+ 
+cat >> "$CLIENTS_FILE" <<EOF
+ 
+client red_santiago {
+    ipaddr     = 192.168.4.0/22
+    secret     = quisqueya
+    require_message_authenticator = no
+}
+EOF
+ 
+systemctl enable freeradius
+systemctl restart freeradius
+ 
+#############################################################################
+# 6. SERVICIO DE CORREO (Postfix + Dovecot)
+#############################################################################
+echo ">>> [6/7] Instalando y configurando correo (Postfix + Dovecot)..."
+ 
+echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections
+echo "postfix postfix/mailname string ${DOMINIO}" | debconf-set-selections
+ 
+DEBIAN_FRONTEND=noninteractive apt-get install -y postfix dovecot-core dovecot-imapd mailutils
+ 
+postconf -e "myhostname = srv-santiago.${DOMINIO}"
+postconf -e "mydomain = ${DOMINIO}"
+postconf -e "myorigin = /etc/mailname"
+echo "${DOMINIO}" > /etc/mailname
+postconf -e "mydestination = \$myhostname, ${DOMINIO}, localhost.${DOMINIO}, localhost"
+postconf -e "home_mailbox = Maildir/"
+postconf -e "inet_interfaces = all"
+ 
+# Habilitar Maildir en Dovecot
+sed -i 's/^mail_location.*/mail_location = maildir:~\/Maildir/' /etc/dovecot/conf.d/10-mail.conf
+sed -i 's/^#disable_plaintext_auth.*/disable_plaintext_auth = no/' /etc/dovecot/conf.d/10-auth.conf
+ 
+# --- Crear el buzon (Maildir) para cada integrante ---
+for USER in "${USUARIOS[@]}"; do
+    su - "$USER" -c "maildirmake.dovecot ~/Maildir" 2>/dev/null || true
+    su - "$USER" -c "maildirmake.dovecot ~/Maildir/.Sent" 2>/dev/null || true
+    su - "$USER" -c "maildirmake.dovecot ~/Maildir/.Trash" 2>/dev/null || true
+    echo "  Cuenta de correo lista: ${USER}@${DOMINIO}"
+done
+ 
+systemctl enable postfix dovecot
+systemctl restart postfix dovecot
+ 
+#############################################################################
+# 7. FIREWALL BASICO (opcional pero recomendado)
+#############################################################################
+echo ">>> [7/7] Ajustando firewall (UFW)..."
+ 
+apt-get install -y ufw
+ufw allow 53         # DNS
+ufw allow 67/udp     # DHCP
+ufw allow 80/tcp     # HTTP
+ufw allow 443/tcp    # HTTPS
+ufw allow 111        # NFS/RPC
+ufw allow 2049       # NFS
+ufw allow 1812/udp   # RADIUS auth
+ufw allow 1813/udp   # RADIUS accounting
+ufw allow 22/tcp     # SSH
+ufw allow 25/tcp     # SMTP
+ufw allow 143/tcp    # IMAP
+ufw --force enable
+ 
+echo "======================================================================"
+echo " INSTALACION COMPLETA - Resumen"
+echo "======================================================================"
+echo " DNS:      dominio ${DOMINIO}  (servidor ${SERVER_IP})"
+echo " DHCP:     VLAN25 ${NET25}/24 | VLAN30 ${NET30}/25 | VLAN35 ${NET35}/25"
+echo " WEB:      http://${DOMINIO_WWW}"
+echo " NFS:      /srv/nfs/compartido"
+echo " RADIUS:   puerto 1812/udp, secreto compartido 'quisqueya' (editar clients.conf)"
+echo " CORREO:   cuentas creadas para: ${USUARIOS[*]} @ ${DOMINIO}"
+echo "======================================================================"
+echo " PENDIENTES MANUALES:"
+echo " 1) Reemplazar /var/www/${DOMINIO}/html/index.html con el contenido"
+echo "    adjunto real de la pagina de la empresa."
+echo " 2) Agregar 'ip helper-address ${SERVER_IP}' en las VLAN 30 y 35 del"
+echo "    Multicapa-Santiago para que el DHCP llegue a esas VLAN."
+echo " 3) Cambiar el secreto RADIUS 'quisqueya' por uno mas seguro en produccion."
+echo " 4) Cada usuario debe cambiar su password por defecto (${PASSWORD_DEFECTO})."
+echo "======================================================================"
+
+
+
+
+
+systemctl status bind9 isc-dhcp-server apache2 nfs-kernel-server freeradius postfix dovecot
+
+
+
+
+
+#!/bin/bash
+#############################################################################
+# SCRIPT CORREGIDO PARA KVM - ARGOS NETWORKS
+#############################################################################
+
+# --- Datos de la empresa ---
+EMPRESA_NOMBRE="Argos Networks"
+DOMINIO="argosnetworks.com.do"
+DOMINIO_WWW="www.${DOMINIO}"
+ 
+# --- Integrantes del grupo ---
+USUARIOS=("karla_oviedo" "miguel_angel" "luis_g" "kendry_rene" "alexander_cruz" "anthony_naviel")
+PASSWORD_DEFECTO="Quisqueya2026*"
+ 
+# --- Direccionamiento del servidor ---
+IFACE="eth0"                                      # Tu interfaz interna
+SERVER_IP="192.168.4.10"
+SERVER_MASK="255.255.255.0"
+SERVER_CIDR="24"
+GATEWAY_SANTIAGO="192.168.4.1"
+DNS_PROPIO="192.168.4.10"
+ 
+# --- Redes VLAN ---
+NET25="192.168.4.0";  MASK25="255.255.255.0";   GW25="192.168.4.1"
+NET30="192.168.5.0";  MASK30="255.255.255.128"; GW30="192.168.5.1"
+NET35="192.168.5.128"; MASK35="255.255.255.128"; GW35="192.168.5.129"
+ 
+echo "======================================================================"
+echo " Configurando servidor multiservicio para: ${EMPRESA_NOMBRE}"
+echo "======================================================================"
+ 
+# 1. DIRECCIONAMIENTO ESTATICO
+echo ">>> [1/7] Configurando red..."
+NETPLAN_FILE="/etc/netplan/01-netcfg.yaml"
+cat > "$NETPLAN_FILE" <<EOF
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: no
+      addresses: [${SERVER_IP}/${SERVER_CIDR}]
+      routes:
+        - to: 192.168.0.0/16
+          via: ${GATEWAY_SANTIAGO}
+      nameservers:
+        addresses: [127.0.0.1, 8.8.8.8]
+    eth1:
+      dhcp4: yes
+EOF
+chmod 600 "$NETPLAN_FILE"
+netplan apply || true
+ 
+hostnamectl set-hostname "srv-santiago.${DOMINIO}"
+echo "127.0.1.1 srv-santiago.${DOMINIO} srv-santiago" >> /etc/hosts
+apt-get update -y
+ 
+# 2. DNS
+echo ">>> [2/7] Instalando DNS (BIND9)..."
+apt-get install -y bind9 bind9utils bind9-doc
+cat > /etc/bind/named.conf.local <<EOF
+zone "${DOMINIO}" { type master; file "/etc/bind/db.${DOMINIO}"; };
+zone "4.168.192.in-addr.arpa" { type master; file "/etc/bind/db.192.168.4"; };
+EOF
+SERIAL=$(date +%Y%m%d01)
+cat > "/etc/bind/db.${DOMINIO}" <<EOF
+\$TTL 604800
+@ IN SOA srv-santiago.${DOMINIO}. admin.${DOMINIO}. (${SERIAL} 604800 86400 2419200 604800)
+@ IN NS srv-santiago.${DOMINIO}.
+@ IN MX 10 mail.${DOMINIO}.
+@ IN A ${SERVER_IP}
+srv-santiago IN A ${SERVER_IP}
+www IN A ${SERVER_IP}
+mail IN A ${SERVER_IP}
+ns1 IN A ${SERVER_IP}
+radius IN A ${SERVER_IP}
+nfs IN A ${SERVER_IP}
+EOF
+cat > /etc/bind/db.192.168.4 <<EOF
+\$TTL 604800
+@ IN SOA srv-santiago.${DOMINIO}. admin.${DOMINIO}. (${SERIAL} 604800 86400 2419200 604800)
+@ IN NS srv-santiago.${DOMINIO}.
+10 IN PTR srv-santiago.${DOMINIO}.
+EOF
+systemctl restart bind9
+ 
+# 3. DHCP
+echo ">>> [3/7] Instalando DHCP..."
+apt-get install -y isc-dhcp-server || true
+sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"${IFACE}\"/" /etc/default/isc-dhcp-server
+cat > /etc/dhcp/dhcpd.conf <<EOF
+default-lease-time 600;
+max-lease-time 7200;
+authoritative;
+option domain-name "${DOMINIO}";
+option domain-name-servers ${DNS_PROPIO};
+subnet ${NET25} netmask ${MASK25} { range 192.168.4.20 192.168.4.200; option routers ${GW25}; }
+subnet ${NET30} netmask ${MASK30} { range 192.168.5.10 192.168.5.120; option routers ${GW30}; }
+subnet ${NET35} netmask ${MASK35} { range 192.168.5.140 192.168.5.250; option routers ${GW35}; }
+EOF
+systemctl restart isc-dhcp-server || true
+ 
+# 4. WEB
+echo ">>> [4/7] Instalando Servidor Web..."
+apt-get install -y apache2
+mkdir -p /var/www/${DOMINIO}/html
+chown -R www-data:www-data /var/www/${DOMINIO}
+cat > /var/www/${DOMINIO}/html/index.html <<EOF
+<!DOCTYPE html><html><head><title>${EMPRESA_NOMBRE}</title></head><body><h1>Bienvenido a ${EMPRESA_NOMBRE}</h1><p>Sitio web oficial: ${DOMINIO_WWW}</p></body></html>
+EOF
+cat > /etc/apache2/sites-available/${DOMINIO}.conf <<EOF
+<VirtualHost *:80>
+    ServerName ${DOMINIO}
+    ServerAlias ${DOMINIO_WWW}
+    DocumentRoot /var/www/${DOMINIO}/html
+</VirtualHost>
+EOF
+a2dissite 000-default.conf || true
+a2ensite ${DOMINIO}.conf
+systemctl restart apache2
+ 
+# 5. NFS y RADIUS
+echo ">>> [5/7] Instalando NFS y RADIUS..."
+apt-get install -y nfs-kernel-server freeradius
+mkdir -p /srv/nfs/compartido
+for USER in "${USUARIOS[@]}"; do
+    if ! id "$USER" &>/dev/null; then
+        useradd -m -s /bin/bash "$USER"
+        echo "${USER}:${PASSWORD_DEFECTO}" | chpasswd
+    fi
+done
+chown -R nobody:nogroup /srv/nfs/compartido
+chmod 2770 /srv/nfs/compartido
+cat > /etc/exports <<EOF
+/srv/nfs/compartido  192.168.4.0/24(rw,sync,no_subtree_check)
+/srv/nfs/compartido  192.168.5.0/25(rw,sync,no_subtree_check)
+/srv/nfs/compartido  192.168.5.128/25(rw,sync,no_subtree_check)
+EOF
+exportfs -ra
+systemctl restart nfs-kernel-server
+
+RADIUS_USERS_FILE="/etc/freeradius/3.0/users"
+[ -f "$RADIUS_USERS_FILE" ] || RADIUS_USERS_FILE="/etc/freeradius/users"
+for USER in "${USUARIOS[@]}"; do
+    if ! grep -q "^${USER}\s" "$RADIUS_USERS_FILE" 2>/dev/null; then
+        echo "${USER}  Cleartext-Password := \"${PASSWORD_DEFECTO}\"" >> "$RADIUS_USERS_FILE"
+    fi
+done
+CLIENTS_FILE="/etc/freeradius/3.0/clients.conf"
+[ -f "$CLIENTS_FILE" ] || CLIENTS_FILE="/etc/freeradius/clients.conf"
+cat >> "$CLIENTS_FILE" <<EOF
+client red_santiago { ipaddr = 192.168.4.0/22; secret = quisqueya; require_message_authenticator = no; }
+EOF
+systemctl restart freeradius
+ 
+# 6. CORREO
+echo ">>> [6/7] Instalando Correo..."
+echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections
+echo "postfix postfix/mailname string ${DOMINIO}" | debconf-set-selections
+DEBIAN_FRONTEND=noninteractive apt-get install -y postfix dovecot-core dovecot-imapd mailutils
+postconf -e "myhostname = srv-santiago.${DOMINIO}"
+postconf -e "mydomain = ${DOMINIO}"
+postconf -e "myorigin = /etc/mailname"
+echo "${DOMINIO}" > /etc/mailname
+postconf -e "mydestination = \$myhostname, ${DOMINIO}, localhost.${DOMINIO}, localhost"
+postconf -e "home_mailbox = Maildir/"
+postconf -e "inet_interfaces = all"
+sed -i 's/^mail_location.*/mail_location = maildir:~\/Maildir/' /etc/dovecot/conf.d/10-mail.conf
+sed -i 's/^#disable_plaintext_auth.*/disable_plaintext_auth = no/' /etc/dovecot/conf.d/10-auth.conf
+for USER in "${USUARIOS[@]}"; do
+    su - "$USER" -c "maildirmake.dovecot ~/Maildir" 2>/dev/null || true
+done
+systemctl restart postfix dovecot
+ 
+# 7. FIREWALL
+echo ">>> [7/7] Ajustando firewall..."
+apt-get install -y ufw
+ufw allow 53; ufw allow 67/udp; ufw allow 80/tcp; ufw allow 443/tcp; ufw allow 111; ufw allow 2049; ufw allow 1812/udp; ufw allow 1813/udp; ufw allow 22/tcp; ufw allow 25/tcp; ufw allow 143/tcp
+ufw --force enable
+ 
+echo "======================================================================"
+echo " INSTALACION COMPLETA - Todo se ejecuto correctamente."
+echo "======================================================================"
+
+systemctl status bind9 isc-dhcp-server apache2 nfs-kernel-server freeradius postfix dovecot
+
+
+
+
+
+# 1. Instalar paquetes de correo sin interacción
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postfix dovecot-core dovecot-imapd mailutils
+
+# 2. Configurar Postfix (Envío de correo)
+sudo postconf -e "myhostname = srv-santiago.argosnetworks.com.do"
+sudo postconf -e "mydomain = argosnetworks.com.do"
+sudo postconf -e "myorigin = /etc/mailname"
+echo "argosnetworks.com.do" | sudo tee /etc/mailname
+sudo postconf -e "mydestination = \$myhostname, argosnetworks.com.do, localhost.argosnetworks.com.do, localhost"
+sudo postconf -e "home_mailbox = Maildir/"
+sudo postconf -e "inet_interfaces = all"
+
+# 3. Configurar Dovecot (Recepción de correo IMAP)
+sudo sed -i 's/^mail_location.*/mail_location = maildir:~\/Maildir/' /etc/dovecot/conf.d/10-mail.conf
+sudo sed -i 's/^#disable_plaintext_auth.*/disable_plaintext_auth = no/' /etc/dovecot/conf.d/10-auth.conf
+
+# 4. Crear los buzones de los usuarios
+USUARIOS=("karla_oviedo" "miguel_angel" "luis_g" "kendry_rene" "alexander_cruz" "anthony_naviel")
+for USER in "${USUARIOS[@]}"; do
+    sudo su - "$USER" -c "maildirmake.dovecot ~/Maildir" 2>/dev/null || true
+done
+
+# 5. Reiniciar los servicios
+sudo systemctl restart postfix dovecot

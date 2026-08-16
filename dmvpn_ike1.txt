@@ -1,0 +1,316 @@
+=========================================================
+DMVPN FASE 1 - IKEv1 (hub-and-spoke)
+HUB: Router Santo Domingo (19.0.0.1)
+SPOKES: Santiago (19.0.0.5), La Romana (19.0.0.9),
+        Puerto Plata (19.0.0.13), Barahona (19.0.0.17)
+Red de tunel: 172.16.0.0/24
+=========================================================
+
+-----------------------------------------
+Router Santo Domingo (HUB)
+-----------------------------------------
+
+enable
+configure terminal
+
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+
+crypto isakmp key DMVPN-Argos-2024 address 0.0.0.0 0.0.0.0
+
+crypto ipsec transform-set TS-DMVPN esp-aes 256 esp-sha256-hmac
+ mode transport
+exit
+
+crypto ipsec profile DMVPN-PROFILE
+ set transform-set TS-DMVPN
+exit
+
+interface Tunnel0
+ description DMVPN HUB - Santo Domingo
+ ip address 172.16.0.1 255.255.255.0
+ no ip redirects
+ ip mtu 1400
+ ip tcp adjust-mss 1360
+ ip nhrp authentication argosdmvpn
+ ip nhrp network-id 100
+ ip nhrp map multicast dynamic
+ ip ospf network point-to-multipoint
+ ip ospf cost 10
+ bandwidth 10000
+ tunnel source e0/2
+ tunnel mode gre multipoint
+ tunnel key 100
+ tunnel protection ipsec profile DMVPN-PROFILE
+ no shutdown
+exit
+
+router ospf 1
+ network 172.16.0.0 0.0.0.255 area 0
+exit
+
+end
+write memory
+
+-----------------------------------------
+Multicapa Santiago (SPOKE)
+-----------------------------------------
+
+enable
+configure terminal
+
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+
+crypto isakmp key DMVPN-Argos-2024 address 0.0.0.0 0.0.0.0
+
+crypto ipsec transform-set TS-DMVPN esp-aes 256 esp-sha256-hmac
+ mode transport
+exit
+
+crypto ipsec profile DMVPN-PROFILE
+ set transform-set TS-DMVPN
+exit
+
+interface Tunnel0
+ description DMVPN SPOKE - Santiago
+ ip address 172.16.0.2 255.255.255.0
+ no ip redirects
+ ip mtu 1400
+ ip tcp adjust-mss 1360
+ ip nhrp authentication argosdmvpn
+ ip nhrp network-id 100
+ ip nhrp map 172.16.0.1 19.0.0.1
+ ip nhrp map multicast 19.0.0.1
+ ip nhrp nhs 172.16.0.1
+ ip ospf network point-to-multipoint
+ ip ospf cost 10
+ bandwidth 10000
+ tunnel source e0/0
+ tunnel mode gre multipoint
+ tunnel key 100
+ tunnel protection ipsec profile DMVPN-PROFILE
+ no shutdown
+exit
+
+router ospf 1
+ network 172.16.0.0 0.0.0.255 area 0
+exit
+
+end
+write memory
+
+-----------------------------------------
+Router La Romana (SPOKE)
+-----------------------------------------
+
+enable
+configure terminal
+
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+
+crypto isakmp key DMVPN-Argos-2024 address 0.0.0.0 0.0.0.0
+
+crypto ipsec transform-set TS-DMVPN esp-aes 256 esp-sha256-hmac
+ mode transport
+exit
+
+crypto ipsec profile DMVPN-PROFILE
+ set transform-set TS-DMVPN
+exit
+
+interface Tunnel0
+ description DMVPN SPOKE - La Romana
+ ip address 172.16.0.3 255.255.255.0
+ no ip redirects
+ ip mtu 1400
+ ip tcp adjust-mss 1360
+ ip nhrp authentication argosdmvpn
+ ip nhrp network-id 100
+ ip nhrp map 172.16.0.1 19.0.0.1
+ ip nhrp map multicast 19.0.0.1
+ ip nhrp nhs 172.16.0.1
+ ip ospf network point-to-multipoint
+ ip ospf cost 10
+ bandwidth 10000
+ tunnel source e0/1
+ tunnel mode gre multipoint
+ tunnel key 100
+ tunnel protection ipsec profile DMVPN-PROFILE
+ no shutdown
+exit
+
+router ospf 1
+ network 172.16.0.0 0.0.0.255 area 0
+exit
+
+end
+write memory
+
+-----------------------------------------
+Router Puerto Plata (SPOKE)
+-----------------------------------------
+
+enable
+configure terminal
+
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+
+crypto isakmp key DMVPN-Argos-2024 address 0.0.0.0 0.0.0.0
+
+crypto ipsec transform-set TS-DMVPN esp-aes 256 esp-sha256-hmac
+ mode transport
+exit
+
+crypto ipsec profile DMVPN-PROFILE
+ set transform-set TS-DMVPN
+exit
+
+interface Tunnel0
+ description DMVPN SPOKE - Puerto Plata
+ ip address 172.16.0.4 255.255.255.0
+ no ip redirects
+ ip mtu 1400
+ ip tcp adjust-mss 1360
+ ip nhrp authentication argosdmvpn
+ ip nhrp network-id 100
+ ip nhrp map 172.16.0.1 19.0.0.1
+ ip nhrp map multicast 19.0.0.1
+ ip nhrp nhs 172.16.0.1
+ ip ospf network point-to-multipoint
+ ip ospf cost 10
+ bandwidth 10000
+ tunnel source e0/1
+ tunnel mode gre multipoint
+ tunnel key 100
+ tunnel protection ipsec profile DMVPN-PROFILE
+ no shutdown
+exit
+
+router ospf 1
+ network 172.16.0.0 0.0.0.255 area 0
+exit
+
+end
+write memory
+
+-----------------------------------------
+Router Barahona (SPOKE)
+-----------------------------------------
+
+enable
+configure terminal
+
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+
+crypto isakmp key DMVPN-Argos-2024 address 0.0.0.0 0.0.0.0
+
+crypto ipsec transform-set TS-DMVPN esp-aes 256 esp-sha256-hmac
+ mode transport
+exit
+
+crypto ipsec profile DMVPN-PROFILE
+ set transform-set TS-DMVPN
+exit
+
+interface Tunnel0
+ description DMVPN SPOKE - Barahona
+ ip address 172.16.0.5 255.255.255.0
+ no ip redirects
+ ip mtu 1400
+ ip tcp adjust-mss 1360
+ ip nhrp authentication argosdmvpn
+ ip nhrp network-id 100
+ ip nhrp map 172.16.0.1 19.0.0.1
+ ip nhrp map multicast 19.0.0.1
+ ip nhrp nhs 172.16.0.1
+ ip ospf network point-to-multipoint
+ ip ospf cost 10
+ bandwidth 10000
+ tunnel source e0/1
+ tunnel mode gre multipoint
+ tunnel key 100
+ tunnel protection ipsec profile DMVPN-PROFILE
+ no shutdown
+exit
+
+router ospf 1
+ network 172.16.0.0 0.0.0.255 area 0
+exit
+
+end
+write memory
+
+
+=========================================================
+VERIFICACION (correr en el HUB y en cada SPOKE)
+=========================================================
+
+! --- 1. Estado del tunel GRE en si (debe estar UP/UP)
+show interfaces tunnel 0
+
+! --- 2. Registro NHRP (en el HUB deben aparecer los 4 spokes
+!     como "dynamic"; en cada SPOKE debe aparecer el HUB como
+!     "static" con NBMA 19.0.0.1)
+show ip nhrp
+show dmvpn detail
+
+! --- 3. En los SPOKES: confirmar que el NHS (hub) esta
+!     registrado correctamente
+show ip nhrp nhs detail
+
+! --- 4. Fase 1 IKEv1 (debe mostrar QM_IDLE = negociado)
+show crypto isakmp sa
+
+! --- 5. Fase 2 IPsec (los contadores de "encaps"/"decaps" solo
+!     suben cuando hay trafico real cruzando por el tunel, igual
+!     que con crypto map tradicional; no basta con hacer ping a
+!     las IP del propio tunel)
+show crypto ipsec sa
+show crypto session detail
+
+! --- 6. Vecindad OSPF sobre el tunel (debe verse el vecino con
+!     estado FULL y "point-to-multipoint" en cada spoke, y los
+!     4 spokes FULL en el hub)
+show ip ospf neighbor
+
+! --- 7. Confirmar que la ruta hacia la LAN remota esta usando
+!     el tunel (next-hop 172.16.0.x) y no el camino directo por
+!     el ISP
+show ip route ospf
+show ip route 192.168.6.0    ! ejemplo: LAN de La Romana visto desde otra sede
+
+! --- 8. Prueba de trafico real end-to-end (ejecutar desde un PC
+!     de una sede hacia un PC de otra sede) y luego revisar de
+!     nuevo "show crypto ipsec sa" para confirmar que los
+!     contadores de paquetes cifrados incrementaron
+ping <IP de un PC en otra sede>
+traceroute <IP de un PC en otra sede>

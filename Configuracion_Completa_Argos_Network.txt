@@ -1,0 +1,2304 @@
+#############################################################################
+#############################################################################
+##                                                                        ##
+##       CONFIGURACION COMPLETA DE RED - ARGOS NETWORK                   ##
+##       Dominio: argosnetwork.com.do                                    ##
+##                                                                        ##
+##  Incluye: OSPF Multiarea, VTP, HSRP, DHCP, Seguridad de Capa 2         ##
+##  (DHCP Snooping / DAI / Port-Security), SSH + ACL de gestion,          ##
+##  VPN IPSec Hub-and-Spoke.                                             ##
+##                                                                        ##
+##  Sedes: Santo Domingo (HUB) - Santiago - La Romana                    ##
+##         Puerto Plata - Barahona                                       ##
+##                                                                        ##
+##  NOTA: Este documento contiene los bloques de configuracion para      ##
+##  copiar/pegar en cada dispositivo (uno a la vez), en el orden en      ##
+##  que aparecen. Incluye 3 correcciones respecto a versiones            ##
+##  anteriores (marcadas con "### FIX ###") detectadas en la auditoria   ##
+##  de seguridad.                                                        ##
+##                                                                        ##
+#############################################################################
+#############################################################################
+
+
+===========================================================================
+ CREDENCIALES Y VARIABLES COMUNES A TODOS LOS DISPOSITIVOS
+===========================================================================
+Dominio IOS:      argosnetwork.com.do
+VTP domain:       Futuro
+VTP password:     quisqueya
+Password consola/enable/vty: quisqueya
+Usuarios administrativos (privilege 15): Efren/tigre , Ezequiel/leon
+Usuarios operador (privilege 7):         Oliver/aguila , Justin/lobo
+VLAN nativa/backbone de trunks: VLAN 100
+Clave RADIUS entre routers y servidor:   quisqueya (cambiar en produccion)
+
+
+===========================================================================
+ 1. ISP (BACKBONE OSPF - AREA 0)
+===========================================================================
+enable
+configure terminal
+banner motd #
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!   ARGOS NETWORK - ACCESO RESTRINGIDO !!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
+hostname ISP
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+
+interface f0/0
+ ip address 19.0.0.2 255.255.255.252
+ no shutdown
+exit
+interface fa1/0
+ ip address 19.0.0.6 255.255.255.252
+ no shutdown
+exit
+interface fa2/0
+ ip address 19.0.0.10 255.255.255.252
+ no shutdown
+exit
+interface f4/0
+ ip address 19.0.0.14 255.255.255.252
+ no shutdown
+exit
+interface fa5/0
+ ip address 19.0.0.18 255.255.255.252
+ no shutdown
+exit
+
+router ospf 1
+ router-id 10.10.10.1
+ network 19.0.0.0 0.0.0.3 area 0
+ network 19.0.0.4 0.0.0.3 area 0
+ network 19.0.0.8 0.0.0.3 area 0
+ network 19.0.0.12 0.0.0.3 area 0
+ network 19.0.0.16 0.0.0.3 area 0
+exit
+
+access-list 10 permit 192.168.0.0 0.0.0.255
+access-list 10 deny any log
+
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+
+end
+write memory
+
+
+===========================================================================
+ 2. ROUTER SANTO DOMINGO (ABR Area 0 / Area 1) - HUB DE VPN
+===========================================================================
+enable
+configure terminal
+banner motd #
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!   ARGOS NETWORK - ACCESO RESTRINGIDO !!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
+hostname Router-Santo-Domingo
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+
+interface e0/0
+ ip address 192.168.9.1 255.255.255.252
+ no shutdown
+exit
+interface e0/1
+ ip address 192.168.9.5 255.255.255.252
+ no shutdown
+exit
+interface e0/2
+ ip address 19.0.0.1 255.255.255.252
+ no shutdown
+exit
+
+router ospf 1
+ router-id 10.10.1.1
+ network 19.0.0.0 0.0.0.3 area 0
+ network 192.168.9.0 0.0.0.3 area 1
+ network 192.168.9.4 0.0.0.3 area 1
+exit
+
+! --- Gestion SSH ---
+access-list 10 permit 192.168.0.0 0.0.0.255
+access-list 10 deny any log
+
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+
+! --- VPN IPSec (HUB hacia las 4 sucursales) ---
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+
+crypto isakmp key SD-Santiago-2024 address 19.0.0.5
+crypto isakmp key SD-Romana-2024 address 19.0.0.9
+crypto isakmp key SD-PuertoPlata-2024 address 19.0.0.13
+crypto isakmp key SD-Barahona-2024 address 19.0.0.17
+
+crypto ipsec transform-set TS-AES256 esp-aes 256 esp-sha256-hmac
+ mode tunnel
+exit
+
+ip access-list extended VPN-SD-SANTIAGO
+ permit ip 192.168.0.0 0.0.0.255 192.168.4.0 0.0.0.255
+ permit ip 192.168.0.0 0.0.0.255 192.168.5.0 0.0.0.127
+ permit ip 192.168.0.0 0.0.0.255 192.168.5.128 0.0.0.127
+ permit ip 192.168.1.0 0.0.0.127 192.168.4.0 0.0.0.255
+ permit ip 192.168.1.0 0.0.0.127 192.168.5.0 0.0.0.127
+ permit ip 192.168.1.0 0.0.0.127 192.168.5.128 0.0.0.127
+ permit ip 192.168.1.128 0.0.0.127 192.168.4.0 0.0.0.255
+ permit ip 192.168.1.128 0.0.0.127 192.168.5.0 0.0.0.127
+ permit ip 192.168.1.128 0.0.0.127 192.168.5.128 0.0.0.127
+ permit ip 192.168.2.0 0.0.0.127 192.168.4.0 0.0.0.255
+ permit ip 192.168.2.0 0.0.0.127 192.168.5.0 0.0.0.127
+ permit ip 192.168.2.0 0.0.0.127 192.168.5.128 0.0.0.127
+exit
+
+ip access-list extended VPN-SD-ROMANA
+ permit ip 192.168.0.0 0.0.0.255 192.168.6.0 0.0.0.127
+ permit ip 192.168.0.0 0.0.0.255 192.168.6.128 0.0.0.63
+ permit ip 192.168.0.0 0.0.0.255 192.168.6.192 0.0.0.63
+ permit ip 192.168.1.0 0.0.0.127 192.168.6.0 0.0.0.127
+ permit ip 192.168.1.0 0.0.0.127 192.168.6.128 0.0.0.63
+ permit ip 192.168.1.0 0.0.0.127 192.168.6.192 0.0.0.63
+ permit ip 192.168.1.128 0.0.0.127 192.168.6.0 0.0.0.127
+ permit ip 192.168.1.128 0.0.0.127 192.168.6.128 0.0.0.63
+ permit ip 192.168.1.128 0.0.0.127 192.168.6.192 0.0.0.63
+ permit ip 192.168.2.0 0.0.0.127 192.168.6.0 0.0.0.127
+ permit ip 192.168.2.0 0.0.0.127 192.168.6.128 0.0.0.63
+ permit ip 192.168.2.0 0.0.0.127 192.168.6.192 0.0.0.63
+exit
+
+ip access-list extended VPN-SD-PUERTOPLATA
+ permit ip 192.168.0.0 0.0.0.255 192.168.7.0 0.0.0.127
+ permit ip 192.168.0.0 0.0.0.255 192.168.7.128 0.0.0.127
+ permit ip 192.168.1.0 0.0.0.127 192.168.7.0 0.0.0.127
+ permit ip 192.168.1.0 0.0.0.127 192.168.7.128 0.0.0.127
+ permit ip 192.168.1.128 0.0.0.127 192.168.7.0 0.0.0.127
+ permit ip 192.168.1.128 0.0.0.127 192.168.7.128 0.0.0.127
+ permit ip 192.168.2.0 0.0.0.127 192.168.7.0 0.0.0.127
+ permit ip 192.168.2.0 0.0.0.127 192.168.7.128 0.0.0.127
+exit
+
+ip access-list extended VPN-SD-BARAHONA
+ permit ip 192.168.0.0 0.0.0.255 192.168.8.0 0.0.0.127
+ permit ip 192.168.0.0 0.0.0.255 192.168.8.128 0.0.0.127
+ permit ip 192.168.1.0 0.0.0.127 192.168.8.0 0.0.0.127
+ permit ip 192.168.1.0 0.0.0.127 192.168.8.128 0.0.0.127
+ permit ip 192.168.1.128 0.0.0.127 192.168.8.0 0.0.0.127
+ permit ip 192.168.1.128 0.0.0.127 192.168.8.128 0.0.0.127
+ permit ip 192.168.2.0 0.0.0.127 192.168.8.0 0.0.0.127
+ permit ip 192.168.2.0 0.0.0.127 192.168.8.128 0.0.0.127
+exit
+
+crypto map VPN-MAP 10 ipsec-isakmp
+ set peer 19.0.0.5
+ set transform-set TS-AES256
+ set pfs group14
+ match address VPN-SD-SANTIAGO
+exit
+crypto map VPN-MAP 20 ipsec-isakmp
+ set peer 19.0.0.9
+ set transform-set TS-AES256
+ set pfs group14
+ match address VPN-SD-ROMANA
+exit
+crypto map VPN-MAP 30 ipsec-isakmp
+ set peer 19.0.0.13
+ set transform-set TS-AES256
+ set pfs group14
+ match address VPN-SD-PUERTOPLATA
+exit
+crypto map VPN-MAP 40 ipsec-isakmp
+ set peer 19.0.0.17
+ set transform-set TS-AES256
+ set pfs group14
+ match address VPN-SD-BARAHONA
+exit
+
+interface e0/2
+ crypto map VPN-MAP
+exit
+
+end
+write memory
+
+
+===========================================================================
+ 3. R-SW1 (MULTICAPA 1 SANTO DOMINGO - VTP SERVER / HSRP ACTIVE)
+===========================================================================
+enable
+configure terminal
+banner motd #
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!   ARGOS NETWORK - ACCESO RESTRINGIDO !!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
+hostname R-SW1-VTP-Server
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+ip routing
+
+vlan 5
+ name Administracion
+exit
+vlan 10
+ name RRHH
+exit
+vlan 15
+ name Marketing
+exit
+vlan 20
+ name Ventas
+exit
+vlan 100
+ name BackBone
+exit
+
+interface range e0/1-3
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+interface range e1/0-2
+ description Conectado a los Switch LAN
+ spanning-tree link-type point-to-point
+ no shutdown
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+interface e0/0
+ no switchport
+ spanning-tree link-type point-to-point
+ no shutdown
+ description Conectado al Router Santo Domingo
+ ip address 192.168.9.2 255.255.255.252
+exit
+
+! --- VLAN / HSRP ---
+interface vlan 5
+ ip address 192.168.0.2 255.255.255.0
+ standby 5 ip 192.168.0.1
+ standby 5 priority 110
+ standby 5 preempt
+ no shutdown
+exit
+interface vlan 10
+ ip address 192.168.1.2 255.255.255.128
+ standby 10 ip 192.168.1.1
+ standby 10 priority 110
+ standby 10 preempt
+ no shutdown
+exit
+interface vlan 15
+ ip address 192.168.1.130 255.255.255.128
+ standby 15 ip 192.168.1.129
+ standby 15 priority 110
+ standby 15 preempt
+ no shutdown
+exit
+interface vlan 20
+ ip address 192.168.2.2 255.255.255.128
+ standby 20 ip 192.168.2.1
+ standby 20 priority 110
+ standby 20 preempt
+ no shutdown
+exit
+
+! --- OSPF ---
+router ospf 1
+ router-id 10.10.1.2
+ passive-interface default
+ no passive-interface e0/0
+ network 192.168.9.0 0.0.0.3 area 1
+ network 192.168.0.0 0.0.0.255 area 1
+ network 192.168.1.0 0.0.0.127 area 1
+ network 192.168.1.128 0.0.0.127 area 1
+ network 192.168.2.0 0.0.0.127 area 1
+exit
+
+! --- VTP ---
+VTP version 2
+VTP mode server
+VTP domain Futuro
+VTP password quisqueya
+
+! --- DHCP (split-scope 80% con R-SW2) ---
+ip dhcp excluded-address 192.168.0.1 192.168.0.3
+ip dhcp excluded-address 192.168.1.1 192.168.1.3
+ip dhcp excluded-address 192.168.1.129 192.168.1.131
+ip dhcp excluded-address 192.168.2.1 192.168.2.3
+ip dhcp excluded-address 192.168.0.205 192.168.0.254
+ip dhcp excluded-address 192.168.1.101 192.168.1.126
+ip dhcp excluded-address 192.168.1.229 192.168.1.254
+ip dhcp excluded-address 192.168.2.101 192.168.2.126
+
+ip dhcp pool VLAN5_ADMINISTRACION
+ network 192.168.0.0 255.255.255.0
+ default-router 192.168.0.1
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN10_RRHH
+ network 192.168.1.0 255.255.255.128
+ default-router 192.168.1.1
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN15_MARKETING
+ network 192.168.1.128 255.255.255.128
+ default-router 192.168.1.129
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN20_VENTAS
+ network 192.168.2.0 255.255.255.128
+ default-router 192.168.2.1
+ dns-server 8.8.8.8
+ lease 7
+exit
+
+! --- Seguridad Capa 2 ---
+ip dhcp snooping
+ip dhcp snooping vlan 5,10,15,20
+no ip dhcp snooping information option
+ip arp inspection vlan 5,10,15,20
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface range e1/0-2
+ ip dhcp snooping trust
+ ip arp inspection trust
+ spanning-tree guard root
+exit
+interface e0/0
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+
+! --- Gestion SSH ---
+access-list 10 permit 192.168.0.0 0.0.0.255
+access-list 10 deny any log
+
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+
+end
+write memory
+
+
+===========================================================================
+ 4. R-SW2 (MULTICAPA 2 SANTO DOMINGO - VTP CLIENTE / HSRP STANDBY)
+===========================================================================
+enable
+configure terminal
+banner motd #
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!   ARGOS NETWORK - ACCESO RESTRINGIDO !!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
+hostname R-SW2-VTP-Cliente
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+ip routing
+
+interface range e0/1-3
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+interface range e1/0-2
+ description Conectado a los Switch LAN
+ spanning-tree link-type point-to-point
+ no shutdown
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+interface e0/0
+ no switchport
+ spanning-tree link-type point-to-point
+ description Conectado al Router Santo Domingo
+ no shutdown
+ ip address 192.168.9.6 255.255.255.252
+exit
+
+interface vlan 5
+ ip address 192.168.0.3 255.255.255.0
+ standby 5 ip 192.168.0.1
+ standby 5 priority 100
+ standby 5 preempt
+ no shutdown
+exit
+interface vlan 10
+ ip address 192.168.1.3 255.255.255.128
+ standby 10 ip 192.168.1.1
+ standby 10 priority 100
+ standby 10 preempt
+ no shutdown
+exit
+interface vlan 15
+ ip address 192.168.1.131 255.255.255.128
+ standby 15 ip 192.168.1.129
+ standby 15 priority 100
+ standby 15 preempt
+ no shutdown
+exit
+interface vlan 20
+ ip address 192.168.2.3 255.255.255.128
+ standby 20 ip 192.168.2.1
+ standby 20 priority 100
+ standby 20 preempt
+ no shutdown
+exit
+
+router ospf 1
+ router-id 10.10.1.3
+ passive-interface default
+ no passive-interface e0/0
+ network 192.168.9.4 0.0.0.3 area 1
+ network 192.168.0.0 0.0.0.255 area 1
+ network 192.168.1.0 0.0.0.127 area 1
+ network 192.168.1.128 0.0.0.127 area 1
+ network 192.168.2.0 0.0.0.127 area 1
+exit
+
+VTP version 2
+VTP mode client
+VTP domain Futuro
+VTP password quisqueya
+
+! --- DHCP (split-scope 20% - respaldo de R-SW1) ---
+ip dhcp excluded-address 192.168.0.1 192.168.0.3
+ip dhcp excluded-address 192.168.1.1 192.168.1.3
+ip dhcp excluded-address 192.168.1.129 192.168.1.131
+ip dhcp excluded-address 192.168.2.1 192.168.2.3
+ip dhcp excluded-address 192.168.0.4 192.168.0.204
+ip dhcp excluded-address 192.168.1.4 192.168.1.100
+ip dhcp excluded-address 192.168.1.132 192.168.1.228
+ip dhcp excluded-address 192.168.2.4 192.168.2.100
+
+ip dhcp pool VLAN5_ADMINISTRACION
+ network 192.168.0.0 255.255.255.0
+ default-router 192.168.0.1
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN10_RRHH
+ network 192.168.1.0 255.255.255.128
+ default-router 192.168.1.1
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN15_MARKETING
+ network 192.168.1.128 255.255.255.128
+ default-router 192.168.1.129
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN20_VENTAS
+ network 192.168.2.0 255.255.255.128
+ default-router 192.168.2.1
+ dns-server 8.8.8.8
+ lease 7
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 5,10,15,20
+no ip dhcp snooping information option
+ip arp inspection vlan 5,10,15,20
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface range e1/0-2
+ ip dhcp snooping trust
+ ip arp inspection trust
+ spanning-tree guard root
+exit
+interface e0/0
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+
+access-list 10 permit 192.168.0.0 0.0.0.255
+access-list 10 deny any log
+
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+
+end
+write memory
+
+
+===========================================================================
+ 5. SWITCHES DE ACCESO - SANTO DOMINGO (SW3, SW4, SW5)
+===========================================================================
+
+--------------------------- SW3 - Administracion (VLAN 5) ----------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname Switch-Administracion
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+interface range e0/0-1
+ no shutdown
+ description Conexion con MultiCapas
+ switchport mode trunk
+ switchport trunk native vlan 100
+ spanning-tree link-type point-to-point
+exit
+
+VTP version 2
+VTP mode client
+VTP domain Futuro
+VTP password quisqueya
+
+interface e0/2
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Administracion
+ switchport mode access
+ switchport access vlan 5
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 5
+no ip dhcp snooping information option
+ip arp inspection vlan 5
+
+interface range e0/0-1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e0/2
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.0.0 0.0.0.255
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+--------------------------- SW4 - RRHH (VLAN 10) --------------------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname Switch-RRHH
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+interface range e0/0-1
+ no shutdown
+ description Conexion con MultiCapas
+ switchport mode trunk
+ switchport trunk native vlan 100
+ spanning-tree link-type point-to-point
+exit
+
+VTP version 2
+VTP mode client
+VTP domain Futuro
+VTP password quisqueya
+
+interface e0/2
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion RRHH
+ switchport mode access
+ switchport access vlan 10
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 10
+no ip dhcp snooping information option
+ip arp inspection vlan 10
+
+interface range e0/0-1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e0/2
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.0.0 0.0.0.255
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+------------------- SW5 - Marketing (VLAN 15) y Ventas (VLAN 20) ----------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname SW-Ventas-Marketing
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+interface range e0/0-1
+ no shutdown
+ description Conexion con MultiCapas
+ switchport mode trunk
+ switchport trunk native vlan 100
+ spanning-tree link-type point-to-point
+exit
+
+VTP version 2
+VTP mode client
+VTP domain Futuro
+VTP password quisqueya
+
+interface e0/2
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Marketing
+ switchport mode access
+ switchport access vlan 15
+ switchport port-security
+ switchport port-security maximum 15
+ switchport port-security violation protect
+exit
+interface e0/3
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Ventas
+ switchport mode access
+ switchport access vlan 20
+ switchport port-security
+ switchport port-security maximum 20
+ switchport port-security violation protect
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 15,20
+no ip dhcp snooping information option
+ip arp inspection vlan 15,20
+
+interface range e0/0-1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e0/2
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.0.0 0.0.0.255
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+
+===========================================================================
+ 6. PUERTO PLATA (AREA 2)
+===========================================================================
+
+--------------------------- Router Puerto Plata ----------------------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname Router-Puerto-Plata
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+
+interface e0/0
+ no shutdown
+exit
+interface e0/0.55
+ encapsulation dot1Q 55
+ ip address 192.168.7.1 255.255.255.128
+exit
+interface e0/0.60
+ encapsulation dot1Q 60
+ ip address 192.168.7.129 255.255.255.128
+exit
+interface e0/1
+ ip address 19.0.0.13 255.255.255.252
+ no shutdown
+exit
+
+router ospf 1
+ router-id 10.10.2.1
+ network 19.0.0.12 0.0.0.3 area 0
+ network 192.168.7.0 0.0.0.127 area 2
+ network 192.168.7.128 0.0.0.127 area 2
+exit
+
+! --- DHCP ---
+ip dhcp excluded-address 192.168.7.1 192.168.7.10
+ip dhcp excluded-address 192.168.7.129 192.168.7.138
+
+ip dhcp pool VLAN55_TECNOLOGIA
+ network 192.168.7.0 255.255.255.128
+ default-router 192.168.7.1
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN60_CONTABILIDAD
+ network 192.168.7.128 255.255.255.128
+ default-router 192.168.7.129
+ dns-server 8.8.8.8
+ lease 7
+exit
+
+! --- VPN IPSec (SPOKE) ---
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+crypto isakmp key SD-PuertoPlata-2024 address 19.0.0.1
+crypto ipsec transform-set TS-AES256 esp-aes 256 esp-sha256-hmac
+ mode tunnel
+exit
+
+ip access-list extended VPN-PUERTOPLATA-SD
+ permit ip 192.168.7.0 0.0.0.127 192.168.0.0 0.0.0.255
+ permit ip 192.168.7.0 0.0.0.127 192.168.1.0 0.0.0.127
+ permit ip 192.168.7.0 0.0.0.127 192.168.1.128 0.0.0.127
+ permit ip 192.168.7.0 0.0.0.127 192.168.2.0 0.0.0.127
+ permit ip 192.168.7.128 0.0.0.127 192.168.0.0 0.0.0.255
+ permit ip 192.168.7.128 0.0.0.127 192.168.1.0 0.0.0.127
+ permit ip 192.168.7.128 0.0.0.127 192.168.1.128 0.0.0.127
+ permit ip 192.168.7.128 0.0.0.127 192.168.2.0 0.0.0.127
+exit
+
+crypto map VPN-MAP 10 ipsec-isakmp
+ set peer 19.0.0.1
+ set transform-set TS-AES256
+ set pfs group14
+ match address VPN-PUERTOPLATA-SD
+exit
+interface e0/1
+ crypto map VPN-MAP
+exit
+
+access-list 10 permit 192.168.7.0 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+
+end
+write memory
+
+--------------------------- SW12 (trunk hacia Router Puerto Plata) --------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname SW-PuertoPlata-Tecnologia
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+### FIX: declarar las VLAN localmente (evita que se pierdan tramas
+### etiquetadas 55/60 cuando el switch actua de transito) ###
+vlan 55
+ name Tecnologia
+exit
+vlan 60
+ name Contabilidad
+exit
+vlan 100
+ name BackBone
+exit
+
+interface e0/0
+ no shutdown
+ description Conexion con Router-Puerto-Plata
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ spanning-tree link-type point-to-point
+exit
+
+interface e1/0
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Tecnologia
+ switchport mode access
+ switchport access vlan 55
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+
+interface range e0/1-3
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 55,60
+no ip dhcp snooping information option
+ip arp inspection vlan 55,60
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+### FIX: confiar tambien en e0/0 (enlace hacia el router = origen del
+### DHCP OFFER/ACK). Sin esto, DHCP Snooping descarta las respuestas. ###
+interface e0/0
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e1/0
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.7.0 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+--------------------------- SW13 (Contabilidad Puerto Plata) --------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname SW-PuertoPlata-Contabilidad
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+vlan 55
+ name Tecnologia
+exit
+vlan 60
+ name Contabilidad
+exit
+vlan 100
+ name BackBone
+exit
+
+interface e1/0
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Contabilidad
+ switchport mode access
+ switchport access vlan 60
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+
+### FIX: el channel-group debe ser e0/1-3 (coincide con el cableado
+### fisico real hacia SW12: e0/1<->e0/1, e0/2<->e0/2, e0/3<->e0/3).
+### e0/0 no esta cableado a nada y NO debe ir en el channel-group. ###
+interface range e0/1-3
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 55,60
+no ip dhcp snooping information option
+ip arp inspection vlan 55,60
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e1/0
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.7.0 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+
+===========================================================================
+ 7. BARAHONA (AREA 3)
+===========================================================================
+
+--------------------------- Router Barahona --------------------------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname Router-Barahona
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+
+interface e0/0
+ no shutdown
+exit
+interface e0/0.65
+ encapsulation dot1Q 65
+ ip address 192.168.8.1 255.255.255.128
+exit
+interface e0/0.70
+ encapsulation dot1Q 70
+ ip address 192.168.8.129 255.255.255.128
+exit
+interface e0/1
+ ip address 19.0.0.17 255.255.255.252
+ no shutdown
+exit
+
+router ospf 1
+ router-id 10.10.3.1
+ network 19.0.0.16 0.0.0.3 area 0
+ network 192.168.8.0 0.0.0.127 area 3
+ network 192.168.8.128 0.0.0.127 area 3
+exit
+
+ip dhcp excluded-address 192.168.8.1 192.168.8.10
+ip dhcp excluded-address 192.168.8.129 192.168.8.138
+
+ip dhcp pool VLAN65_TECNOLOGIA
+ network 192.168.8.0 255.255.255.128
+ default-router 192.168.8.1
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN70_CONTABILIDAD
+ network 192.168.8.128 255.255.255.128
+ default-router 192.168.8.129
+ dns-server 8.8.8.8
+ lease 7
+exit
+
+! --- ACL de segmentacion (Contabilidad solo hacia servidores Santiago) ---
+ip access-list extended ACL-CONTABILIDAD-BARAHONA
+ remark Permitir acceso a servidores Santiago
+ permit tcp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 eq 53
+ permit udp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 eq 53
+ permit tcp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 eq 80
+ permit tcp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 eq 443
+ permit tcp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 eq 25
+ permit tcp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 eq 110
+ permit tcp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 eq 143
+ permit udp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 eq 1812
+ permit udp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 eq 1813
+ permit tcp 192.168.8.128 0.0.0.127 192.168.4.0 0.0.0.255 range 20 21
+ permit icmp 192.168.8.128 0.0.0.127 any echo
+ permit icmp 192.168.8.128 0.0.0.127 any echo-reply
+ remark Bloquear acceso a otros departamentos
+ deny ip 192.168.8.128 0.0.0.127 192.168.0.0 0.0.3.255
+ deny ip 192.168.8.128 0.0.0.127 192.168.5.0 0.0.0.255
+ deny ip 192.168.8.128 0.0.0.127 192.168.6.0 0.0.0.255
+ deny ip 192.168.8.128 0.0.0.127 192.168.7.0 0.0.0.255
+ deny ip 192.168.8.128 0.0.0.127 192.168.8.0 0.0.0.127
+ permit ip any any
+exit
+interface e0/0.70
+ ip access-group ACL-CONTABILIDAD-BARAHONA in
+exit
+
+! --- VPN IPSec (SPOKE) ---
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+crypto isakmp key SD-Barahona-2024 address 19.0.0.1
+crypto ipsec transform-set TS-AES256 esp-aes 256 esp-sha256-hmac
+ mode tunnel
+exit
+
+ip access-list extended VPN-BARAHONA-SD
+ permit ip 192.168.8.0 0.0.0.127 192.168.0.0 0.0.0.255
+ permit ip 192.168.8.0 0.0.0.127 192.168.1.0 0.0.0.127
+ permit ip 192.168.8.0 0.0.0.127 192.168.1.128 0.0.0.127
+ permit ip 192.168.8.0 0.0.0.127 192.168.2.0 0.0.0.127
+ permit ip 192.168.8.128 0.0.0.127 192.168.0.0 0.0.0.255
+ permit ip 192.168.8.128 0.0.0.127 192.168.1.0 0.0.0.127
+ permit ip 192.168.8.128 0.0.0.127 192.168.1.128 0.0.0.127
+ permit ip 192.168.8.128 0.0.0.127 192.168.2.0 0.0.0.127
+exit
+crypto map VPN-MAP 10 ipsec-isakmp
+ set peer 19.0.0.1
+ set transform-set TS-AES256
+ set pfs group14
+ match address VPN-BARAHONA-SD
+exit
+interface e0/1
+ crypto map VPN-MAP
+exit
+
+access-list 10 permit 192.168.8.0 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+
+end
+write memory
+
+--------------------------- SW14 / SW1-Barahona (trunk hacia router) ------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname SW1-Barahona
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+vlan 65
+ name Tecnologia
+exit
+vlan 70
+ name Contabilidad
+exit
+vlan 100
+ name BackBone
+exit
+
+interface e0/3
+ no shutdown
+ description Conexion con Router-Barahona
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ spanning-tree link-type point-to-point
+exit
+
+interface range e0/0-2
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+
+interface e1/0
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Tecnologia
+ switchport mode access
+ switchport access vlan 65
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 65,70
+no ip dhcp snooping information option
+ip arp inspection vlan 65,70
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+### FIX: confiar en e0/3 (enlace hacia el router = origen del DHCP
+### OFFER/ACK). Sin esto, se rompe el DHCP de Tecnologia y Contabilidad. ###
+interface e0/3
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e1/0
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.8.0 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+--------------------------- SW15 / SW2-Barahona (Contabilidad) ------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname SW2-Barahona
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+vlan 65
+ name Tecnologia
+exit
+vlan 70
+ name Contabilidad
+exit
+vlan 100
+ name BackBone
+exit
+
+interface range e0/0-2
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+
+interface e1/0
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Contabilidad
+ switchport mode access
+ switchport access vlan 70
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 65,70
+no ip dhcp snooping information option
+ip arp inspection vlan 65,70
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e1/0
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.8.0 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+
+===========================================================================
+ 8. LA ROMANA (AREA 4)
+===========================================================================
+
+--------------------------- Router La Romana --------------------------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname Router-La-Romana
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+
+interface e0/0
+ no shutdown
+exit
+interface e0/0.40
+ encapsulation dot1Q 40
+ ip address 192.168.6.1 255.255.255.128
+exit
+interface e0/0.45
+ encapsulation dot1Q 45
+ ip address 192.168.6.129 255.255.255.192
+exit
+interface e0/0.50
+ encapsulation dot1Q 50
+ ip address 192.168.6.193 255.255.255.192
+exit
+interface e0/1
+ ip address 19.0.0.9 255.255.255.252
+ no shutdown
+exit
+
+router ospf 1
+ router-id 10.10.4.1
+ network 19.0.0.8 0.0.0.3 area 0
+ network 192.168.6.0 0.0.0.127 area 4
+ network 192.168.6.128 0.0.0.63 area 4
+ network 192.168.6.192 0.0.0.63 area 4
+exit
+
+ip dhcp excluded-address 192.168.6.1 192.168.6.10
+ip dhcp excluded-address 192.168.6.129 192.168.6.138
+ip dhcp excluded-address 192.168.6.193 192.168.6.202
+
+ip dhcp pool VLAN40_TECNOLOGIA
+ network 192.168.6.0 255.255.255.128
+ default-router 192.168.6.1
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN45_CONTABILIDAD
+ network 192.168.6.128 255.255.255.192
+ default-router 192.168.6.129
+ dns-server 8.8.8.8
+ lease 7
+exit
+ip dhcp pool VLAN50_FINANZAS
+ network 192.168.6.192 255.255.255.192
+ default-router 192.168.6.193
+ dns-server 8.8.8.8
+ lease 7
+exit
+
+### FIX: wildcard corregido de 0.0.0.63 a 0.0.0.127 en las lineas "deny"
+### hacia VLAN 40 (192.168.6.0/25), que en la version anterior solo
+### bloqueaba la mitad de esa subred (.0-.63) dejando .64-.127 expuesta. ###
+ip access-list extended ACL-CONTABILIDAD-ROMANA
+ remark Permitir acceso a servidores Santiago
+ permit tcp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 eq 53
+ permit udp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 eq 53
+ permit tcp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 eq 80
+ permit tcp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 eq 443
+ permit tcp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 eq 25
+ permit tcp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 eq 110
+ permit tcp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 eq 143
+ permit udp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 eq 1812
+ permit udp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 eq 1813
+ permit tcp 192.168.6.128 0.0.0.63 192.168.4.0 0.0.0.255 range 20 21
+ permit icmp 192.168.6.128 0.0.0.63 any echo
+ permit icmp 192.168.6.128 0.0.0.63 any echo-reply
+ remark Bloquear acceso a otros departamentos
+ deny ip 192.168.6.128 0.0.0.63 192.168.0.0 0.0.3.255
+ deny ip 192.168.6.128 0.0.0.63 192.168.5.0 0.0.0.255
+ deny ip 192.168.6.128 0.0.0.63 192.168.6.0 0.0.0.127
+ deny ip 192.168.6.128 0.0.0.63 192.168.6.192 0.0.0.63
+ deny ip 192.168.6.128 0.0.0.63 192.168.7.0 0.0.0.255
+ deny ip 192.168.6.128 0.0.0.63 192.168.8.0 0.0.0.255
+ permit ip any any
+exit
+
+ip access-list extended ACL-FINANZAS-ROMANA
+ remark Permitir acceso a servidores Santiago
+ permit tcp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 eq 53
+ permit udp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 eq 53
+ permit tcp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 eq 80
+ permit tcp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 eq 443
+ permit tcp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 eq 25
+ permit tcp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 eq 110
+ permit tcp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 eq 143
+ permit udp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 eq 1812
+ permit udp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 eq 1813
+ permit tcp 192.168.6.192 0.0.0.63 192.168.4.0 0.0.0.255 range 20 21
+ permit icmp 192.168.6.192 0.0.0.63 any echo
+ permit icmp 192.168.6.192 0.0.0.63 any echo-reply
+ remark Bloquear acceso a otros departamentos
+ deny ip 192.168.6.192 0.0.0.63 192.168.0.0 0.0.3.255
+ deny ip 192.168.6.192 0.0.0.63 192.168.5.0 0.0.0.255
+ deny ip 192.168.6.192 0.0.0.63 192.168.6.0 0.0.0.127
+ deny ip 192.168.6.192 0.0.0.63 192.168.6.128 0.0.0.63
+ deny ip 192.168.6.192 0.0.0.63 192.168.7.0 0.0.0.255
+ deny ip 192.168.6.192 0.0.0.63 192.168.8.0 0.0.0.255
+ permit ip any any
+exit
+
+interface e0/0.45
+ ip access-group ACL-CONTABILIDAD-ROMANA in
+exit
+interface e0/0.50
+ ip access-group ACL-FINANZAS-ROMANA in
+exit
+
+! --- VPN IPSec (SPOKE) ---
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+crypto isakmp key SD-Romana-2024 address 19.0.0.1
+crypto ipsec transform-set TS-AES256 esp-aes 256 esp-sha256-hmac
+ mode tunnel
+exit
+
+ip access-list extended VPN-ROMANA-SD
+ permit ip 192.168.6.0 0.0.0.127 192.168.0.0 0.0.0.255
+ permit ip 192.168.6.0 0.0.0.127 192.168.1.0 0.0.0.127
+ permit ip 192.168.6.0 0.0.0.127 192.168.1.128 0.0.0.127
+ permit ip 192.168.6.0 0.0.0.127 192.168.2.0 0.0.0.127
+ permit ip 192.168.6.128 0.0.0.63 192.168.0.0 0.0.0.255
+ permit ip 192.168.6.128 0.0.0.63 192.168.1.0 0.0.0.127
+ permit ip 192.168.6.128 0.0.0.63 192.168.1.128 0.0.0.127
+ permit ip 192.168.6.128 0.0.0.63 192.168.2.0 0.0.0.127
+ permit ip 192.168.6.192 0.0.0.63 192.168.0.0 0.0.0.255
+ permit ip 192.168.6.192 0.0.0.63 192.168.1.0 0.0.0.127
+ permit ip 192.168.6.192 0.0.0.63 192.168.1.128 0.0.0.127
+ permit ip 192.168.6.192 0.0.0.63 192.168.2.0 0.0.0.127
+exit
+crypto map VPN-MAP 10 ipsec-isakmp
+ set peer 19.0.0.1
+ set transform-set TS-AES256
+ set pfs group14
+ match address VPN-ROMANA-SD
+exit
+interface e0/1
+ crypto map VPN-MAP
+exit
+
+access-list 10 permit 192.168.6.0 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+
+end
+write memory
+
+--------------------------- SW1-Romana (trunk hacia router) ---------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname SW1-Romana
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+vlan 40
+ name Tecnologia
+exit
+vlan 45
+ name Contabilidad
+exit
+vlan 50
+ name Finanzas
+exit
+vlan 100
+ name BackBone
+exit
+
+interface e0/0
+ no shutdown
+ description Conexion con Router-Romana
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ spanning-tree link-type point-to-point
+exit
+
+interface range e0/1-3
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+
+interface e1/0
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Tecnologia
+ switchport mode access
+ switchport access vlan 40
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 40,45,50
+no ip dhcp snooping information option
+ip arp inspection vlan 40,45,50
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e0/0
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e1/0
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.6.0 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+--------------------------- SW2-Romana (Finanzas/Contabilidad) ------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname SW2-Romana
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+vlan 40
+ name Tecnologia
+exit
+vlan 45
+ name Contabilidad
+exit
+vlan 50
+ name Finanzas
+exit
+vlan 100
+ name BackBone
+exit
+
+interface range e0/0-2
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+
+interface e1/0
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Finanzas
+ switchport mode access
+ switchport access vlan 50
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+interface e0/3
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Contabilidad
+ switchport mode access
+ switchport access vlan 45
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 40,45,50
+no ip dhcp snooping information option
+ip arp inspection vlan 40,45,50
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface e1/0
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+interface e0/3
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.6.0 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+
+===========================================================================
+ 9. SANTIAGO (AREA 5) - INCLUYE SERVIDOR UBUNTU ARGOS
+===========================================================================
+
+--------------------------- Multicapa Santiago (ABR + SPOKE VPN) ----------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname MultiCapa-Santiago
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+ip routing
+
+vlan 25
+ name DataCenter
+exit
+vlan 30
+ name Ventas
+exit
+vlan 35
+ name Administracion
+exit
+vlan 100
+ name BackBone
+exit
+
+interface e0/0
+ no switchport
+ ip address 19.0.0.5 255.255.255.252
+ no shutdown
+exit
+
+interface vlan 25
+ ip address 192.168.4.1 255.255.255.0
+ no shutdown
+exit
+interface vlan 30
+ ip address 192.168.5.1 255.255.255.128
+ no shutdown
+exit
+interface vlan 35
+ ip address 192.168.5.129 255.255.255.128
+ no shutdown
+exit
+
+router ospf 1
+ router-id 10.10.5.1
+ network 19.0.0.4 0.0.0.3 area 0
+ network 192.168.4.0 0.0.0.255 area 5
+ network 192.168.5.0 0.0.0.127 area 5
+ network 192.168.5.128 0.0.0.127 area 5
+exit
+
+! --- DHCP relay hacia el servidor Ubuntu Argos (192.168.4.10) ---
+! (VLAN 25 no necesita helper porque el servidor vive en esa misma red)
+interface vlan 30
+ ip helper-address 192.168.4.10
+exit
+interface vlan 35
+ ip helper-address 192.168.4.10
+exit
+
+interface range e0/1-2
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+
+! --- Puerto dedicado al servidor Ubuntu (DNS/DHCP/WEB/NFS-RADIUS/Correo) ---
+interface e1/0
+ no shutdown
+ description Conexion Servidor Argos (DNS-DHCP-WEB-NFS-RADIUS-Correo)
+ switchport mode access
+ switchport access vlan 25
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+exit
+
+! --- Seguridad Capa 2 ---
+ip dhcp snooping
+ip dhcp snooping vlan 25,30,35
+no ip dhcp snooping information option
+ip arp inspection vlan 25,30,35
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+ spanning-tree guard root
+exit
+### FIX: confiar en el puerto del servidor Ubuntu; ese servidor es
+### ahora el origen real de las respuestas DHCP para las 3 VLAN. ###
+interface e1/0
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+
+! --- VPN IPSec (SPOKE) ---
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha256
+ authentication pre-share
+ group 14
+ lifetime 86400
+exit
+crypto isakmp key SD-Santiago-2024 address 19.0.0.1
+crypto ipsec transform-set TS-AES256 esp-aes 256 esp-sha256-hmac
+ mode tunnel
+exit
+
+ip access-list extended VPN-SANTIAGO-SD
+ permit ip 192.168.4.0 0.0.0.255 192.168.0.0 0.0.0.255
+ permit ip 192.168.4.0 0.0.0.255 192.168.1.0 0.0.0.127
+ permit ip 192.168.4.0 0.0.0.255 192.168.1.128 0.0.0.127
+ permit ip 192.168.4.0 0.0.0.255 192.168.2.0 0.0.0.127
+ permit ip 192.168.5.0 0.0.0.127 192.168.0.0 0.0.0.255
+ permit ip 192.168.5.0 0.0.0.127 192.168.1.0 0.0.0.127
+ permit ip 192.168.5.0 0.0.0.127 192.168.1.128 0.0.0.127
+ permit ip 192.168.5.0 0.0.0.127 192.168.2.0 0.0.0.127
+ permit ip 192.168.5.128 0.0.0.127 192.168.0.0 0.0.0.255
+ permit ip 192.168.5.128 0.0.0.127 192.168.1.0 0.0.0.127
+ permit ip 192.168.5.128 0.0.0.127 192.168.1.128 0.0.0.127
+ permit ip 192.168.5.128 0.0.0.127 192.168.2.0 0.0.0.127
+exit
+crypto map VPN-MAP 10 ipsec-isakmp
+ set peer 19.0.0.1
+ set transform-set TS-AES256
+ set pfs group14
+ match address VPN-SANTIAGO-SD
+exit
+interface e0/0
+ crypto map VPN-MAP
+exit
+
+access-list 10 permit 192.168.5.128 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+
+end
+write memory
+
+--------------------------- SW1-Santiago (acceso) --------------------------
+enable
+configure terminal
+banner motd #
+!!!! ARGOS NETWORK - ACCESO RESTRINGIDO !!!!
+#
+hostname SW1-Santiago
+ip domain-name argosnetwork.com.do
+crypto key generate rsa
+2046
+ip ssh version 2
+username Efren privilege 15 password tigre
+username Ezequiel privilege 15 password leon
+username Oliver privilege 7 password aguila
+username Justin privilege 7 password lobo
+service password-encryption
+spanning-tree mode rapid-pvst
+
+vlan 25
+ name DataCenter
+exit
+vlan 30
+ name Ventas
+exit
+vlan 35
+ name Administracion
+exit
+vlan 100
+ name BackBone
+exit
+
+interface e0/0
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface e1/0
+ description Conexion Para Etherchannel
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+ spanning-tree link-type point-to-point
+ no shutdown
+ channel-protocol lacp
+ channel-group 1 mode active
+exit
+interface port-channel 1
+ description Interfaz Port-Channel
+ switchport mode trunk
+ switchport trunk native vlan 100
+ switchport trunk allow vlan all
+exit
+
+interface e0/1
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion DataCenter
+ switchport mode access
+ switchport access vlan 25
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+interface e0/2
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Ventas
+ switchport mode access
+ switchport access vlan 30
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+interface e0/3
+ no shutdown
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ description Conexion Administracion
+ switchport mode access
+ switchport access vlan 35
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation protect
+exit
+
+ip dhcp snooping
+ip dhcp snooping vlan 25,30,35
+no ip dhcp snooping information option
+ip arp inspection vlan 25,30,35
+
+interface port-channel 1
+ ip dhcp snooping trust
+ ip arp inspection trust
+exit
+interface range e0/1-3
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 15
+ errdisable recovery cause arp-inspection
+ errdisable recovery cause dhcp-rate-limit
+ errdisable recovery interval 60
+exit
+
+access-list 10 permit 192.168.5.128 0.0.0.127
+access-list 10 deny any log
+line console 0
+ exec-timeout 15
+ password quisqueya
+ login local
+exit
+line vty 0 4
+ exec-timeout 15
+ transport input ssh
+ login local
+ logging synchronous
+ access-class 10 in
+exit
+end
+write memory
+
+--------------------------- Servidor Ubuntu (DNS/DHCP/WEB/NFS-RADIUS/Correo)
+Ver script separado ya entregado: setup_servidor_santiago.sh
+(editar EMPRESA_NOMBRE="Argos Network" y
+ DOMINIO="argosnetwork.com.do" al inicio del archivo antes de ejecutar)
+
+
+===========================================================================
+ 10. VERIFICACION FINAL (ejecutar en los dispositivos correspondientes)
+===========================================================================
+show ip ospf neighbor
+show ip route ospf
+show standby brief                    (R-SW1 / R-SW2)
+show vlan brief                       (todos los switches)
+show etherchannel summary             (todos los switches con Po1)
+show interfaces trunk
+show ip dhcp binding                  (en cada router y en el servidor Ubuntu)
+show ip dhcp snooping binding
+show ip arp inspection statistics vlan <id>
+show crypto isakmp sa
+show crypto ipsec sa
+show crypto map
+
+
+===========================================================================
+ 11. PENDIENTES / DECISIONES A CONFIRMAR CON EL GRUPO
+===========================================================================
+1) La VPN es Hub-and-Spoke: el trafico entre una sucursal y los
+   servidores de Santiago (192.168.4.0/24) NO viaja cifrado, ya que
+   los ACL de trafico interesante de cada spoke solo cubren el
+   trafico hacia Santo Domingo. Si el requisito pide que TODO el
+   trafico interno vaya cifrado, hay que agregar 192.168.4.0/24,
+   192.168.5.0/25 y 192.168.5.128/25 como destino en los ip access-list
+   VPN-*-SD de Puerto Plata, Barahona y La Romana (y el reflejo en
+   Santo Domingo si se requiere trafico spoke-a-spoke completo).
+2) Las ACL de gestion SSH (access-list 10) solo permiten conexion
+   desde la VLAN de administracion de CADA sede. Si el NOC va a
+   administrar todo desde Santo Domingo, hay que agregar
+   192.168.0.0/24 a la access-list 10 de los routers/switches de las
+   demas sedes.
+3) Cambiar las claves de ejemplo (quisqueya, tigre, leon, aguila,
+   lobo, las claves SD-*-2024, y el secreto RADIUS) antes de
+   entregar el proyecto en produccion.
