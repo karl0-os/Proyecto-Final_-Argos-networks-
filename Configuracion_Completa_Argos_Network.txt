@@ -46,11 +46,7 @@ crypto key generate rsa
 2046
 ip ssh version 2
 
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
+
 
 interface f0/0
  ip address 19.0.0.2 255.255.255.252
@@ -280,12 +276,7 @@ crypto key generate rsa
 2046
 ip ssh version 2
 
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
-spanning-tree mode rapid-pvst
+
 
 ip routing
 
@@ -480,12 +471,6 @@ crypto key generate rsa
 2046
 ip ssh version 2
 
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
-spanning-tree mode rapid-pvst
 
 ip routing
 
@@ -658,12 +643,7 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
-spanning-tree mode rapid-pvst
+
 
 interface range e0/0-1
  no shutdown
@@ -735,12 +715,7 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
-spanning-tree mode rapid-pvst
+
 
 interface range e0/0-1
  no shutdown
@@ -905,11 +880,6 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
 
 interface e0/0
  no shutdown
@@ -1014,12 +984,7 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
-spanning-tree mode rapid-pvst
+
 
 ### FIX: declarar las VLAN localmente (evita que se pierdan tramas
 ### etiquetadas 55/60 cuando el switch actua de transito) ###
@@ -1123,12 +1088,6 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
-spanning-tree mode rapid-pvst
 
 vlan 55
  name Tecnologia
@@ -1224,11 +1183,6 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
 
 interface e0/0
  no shutdown
@@ -1358,12 +1312,7 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
-spanning-tree mode rapid-pvst
+
 
 vlan 65
  name Tecnologia
@@ -1465,12 +1414,7 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
-spanning-tree mode rapid-pvst
+
 
 vlan 65
  name Tecnologia
@@ -1562,11 +1506,6 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
 
 interface e0/0
  no shutdown
@@ -1743,12 +1682,6 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
-spanning-tree mode rapid-pvst
 
 vlan 40
  name Tecnologia
@@ -1969,11 +1902,7 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
+
 spanning-tree mode rapid-pvst
 
 ip routing
@@ -2139,11 +2068,7 @@ ip domain-name argosnetwork.com.do
 crypto key generate rsa
 2046
 ip ssh version 2
-username Efren privilege 15 password tigre
-username Ezequiel privilege 15 password leon
-username Oliver privilege 7 password aguila
-username Justin privilege 7 password lobo
-service password-encryption
+
 spanning-tree mode rapid-pvst
 
 vlan 25
@@ -2255,11 +2180,6 @@ line vty 0 4
 exit
 end
 write memory
-
---------------------------- Servidor Ubuntu (DNS/DHCP/WEB/NFS-RADIUS/Correo)
-Ver script separado ya entregado: setup_servidor_santiago.sh
-(editar EMPRESA_NOMBRE="Argos Network" y
- DOMINIO="argosnetwork.com.do" al inicio del archivo antes de ejecutar)
 
 
 ===========================================================================
